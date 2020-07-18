@@ -1,10 +1,5 @@
 from DrivingInterface.drive_controller import DrivingController
 
-DELTA_STEERING = 0.05
-DELTA_THROTTLE = 0.1
-DELTA_BRAKE = 0
-MIN_SPEED = 50
-
 
 class ToGoal:
     def __init__(self):
@@ -21,20 +16,15 @@ class ToGoal:
         return data
 
     def set_steering(self, car_controls, data):
-        if abs(data.to_middle) > 0.5:
-            if data.to_middle > 0:
-                car_controls.steering = -DELTA_STEERING
-            else:
-                car_controls.steering = DELTA_STEERING
-        if abs(data.track_forward_angles[9] > 30):
-            car_controls.steering *= data.track_forward_angles[9]/2
+        car_controls.steering = data.moving_angle*-0.01 + data.to_middle*-0.01
 
     def set_throttle(self, car_controls, data):
-            car_controls.throttle = 0.5
+            car_controls.throttle = 1
 
     def set_brake(self, car_controls, data):
-        if abs(data.track_forward_angles[9]) > 30 and data.speed > MIN_SPEED + 20:
-            car_controls.brake = 0.2
+        if abs(data.track_forward_angles[9]) > 30 and data.speed > 50:
+            car_controls.brake = 1
+            car_controls.throttle = -1
 
 
 class DrivingClient(DrivingController):
