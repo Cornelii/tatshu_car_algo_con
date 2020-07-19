@@ -1,5 +1,5 @@
 from DrivingInterface.drive_controller import DrivingController
-
+import numpy as np
 
 class ToGoal:
     def __init__(self):
@@ -10,22 +10,59 @@ class ToGoal:
         return data
 
     def modify_input(self, data):
+        origin_middle = data.to_middle
+        threshold_d = data.speed / 3.6 * 1.5
+        data.brake_flag = False
+        alpha = 0.2
+        print(f"old middle: {data.to_middle}")
+        for obstacle in data.track_forward_obstacles:
+            if 1 <= obstacle["dist"] <= threshold_d:
+                print(f"the obstacle: {obstacle['to_middle']}")
+                data.to_middle = data.to_middle + alpha * obstacle["to_middle"]
+                if abs(obstacle["to_middle"]) <= 1:
+                    if abs(data.to_middle) > 3:
+                        data.to_middle = 0
+                    elif abs(data.to_middle) <= 2:
+                        data.to_middle = self.get_sign(data.to_middle * obstacle["to_middle"])*self.get_sign(data.to_middle) * 6
+                data.brake_flag = True
+                break
+        print(f"new middle: {data.to_middle}")
         return data
 
     def get_final_input(self, data):
         return data
 
     def set_steering(self, car_controls, data):
-        car_controls.steering = data.moving_angle*-0.01 + data.to_middle*-0.01
+        car_controls.steering = data.moving_angle*-0.02 + data.to_middle*-0.022 + 0.02*data.track_forward_angles[0]
 
     def set_throttle(self, car_controls, data):
+        car_controls.throttle = 1
+        if (data.speed >= 200):
+            car_controls.throttle = 0.3
+        if (data.speed >= 150):
+            car_controls.throttle = 0.5
+        if abs(data.moving_angle) > 10:
+            car_controls.throttle = 0.3
+
+        if data.lap_progress < 0.5:
             car_controls.throttle = 1
 
-    def set_brake(self, car_controls, data):
-        if abs(data.track_forward_angles[9]) > 30 and data.speed > 50:
-            car_controls.brake = 1
-            car_controls.throttle = -1
 
+    def set_brake(self, car_controls, data):
+        if abs(data.track_forward_angles[9]) > 50:
+            if data.speed > 80:
+                car_controls.brake = 0.3
+                car_controls.throttle = 0.3
+            elif data.speed > 100:
+                car_controls.brake = 1
+        if abs(data.track_forward_angles[2] > 10 and data.track_forward_angles[2] < 20 and data.speed > 70):
+            car_controls.brake = 0.3
+            car_controls.throttle = 0.3
+        if data.brake_flag:
+            car_controls.brake = 0.3
+
+    def get_sign(self, x):
+        return 1 if x >= 0 else -1
 
 class DrivingClient(DrivingController):
     def __init__(self):
