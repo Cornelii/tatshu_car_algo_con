@@ -1,15 +1,29 @@
 from DrivingInterface.drive_controller import DrivingController
 import numpy as np
+from track_model.maleysia import track_model  # Implant when submitting
 
 
+''' TODO LIST
+Improve Recognition of Corner & Curvature
+Improve set_brake method
+Over-fitting along with lap_progress
+When avoiding front obstacle, No consideration of its own position.
+Improve sort of things in Escape:
+'''
 class ToGoal:
     def __init__(self, is_debug=False):
         self.DUMMY = 99
         self.utils = Utils()
         self.is_debug = is_debug
+        self.overfitting = True
+        self.track = track_model
 
     def preprocessing(self, sensing_info):
         data = sensing_info
+        if self.overfitting:
+            idx = self.utils.get_current_policy(data.lap_progress, 200, 1)
+            data.to_middle += self.track["to_middle"][idx]
+            print(f"idx:{idx}   value:{self.track['to_middle'][idx]}")
         return data
 
     def modify_input(self, data, half_road_limit=7):
@@ -18,7 +32,7 @@ class ToGoal:
 
         # get obstacle_map
         # m = 5
-        self.utils.get_obstacle_map(data, half_road_limit)
+        self.utils.get_obstacle_map(data, half_road_limit, 10)
 
         # get to_middle to pass for obstacles
         to_middle_target, a, b = self.utils.get_optimal_pass_mid_point(data)
@@ -41,12 +55,14 @@ class ToGoal:
         return data
 
     def get_final_input(self, data):
+
         return data
 
     def set_steering(self, car_controls, data):
         car_controls.steering = data.moving_angle*-0.016 / (0.009*data.speed + 1)
         car_controls.steering += data.to_middle*-0.019 / (0.011*data.speed + 1)
         car_controls.steering += 0.008 * data.track_forward_angles[self.utils.get_significant_idx_for_steering(data.speed/3.6)]
+        car_controls.steering += 0.002 * data.track_forward_angles[0]
         if data.obstacle_flag: # 0.008
             pass
         else:
@@ -68,16 +84,34 @@ class ToGoal:
 
     def set_brake(self, car_controls, data):
         if abs(data.track_forward_angles[9]) > 80:
+            car_controls.brake = self.utils.max(3/250 * (data.speed - 110) + 0.2, 0)
+            if car_controls.brake > 0.8:
+                car_controls.brake = 0.8
+            car_controls.throttle -= 0.07 * car_controls.brake
+        if abs(data.track_forward_angles[5]) > 80:
+            car_controls.brake = self.utils.max(3/250 * (data.speed - 130) + 0.3, 0)
+            if car_controls.brake > 0.8:
+                car_controls.brake = 0.8
+            car_controls.throttle -= 0.07 * car_controls.brake
+
+            '''
             if data.speed > 110:
                 car_controls.brake = 0.2
-                car_controls.throttle = 0.8
             elif data.speed > 130:
                 car_controls.brake = 0.4
             elif data.speed > 150:
                 car_controls.brake = 0.8
+            '''
         if abs(10 < data.track_forward_angles[2] < 20 and data.speed > 130):
             car_controls.brake = 0.3
             car_controls.throttle = 0.5
+
+    def set_final_control(self, car_controls, data):
+        if self.overfitting:
+            idx = self.utils.get_current_policy(data.lap_progress, 200, 1)
+            car_controls.throttle += 0.01 * self.track["throttle"][idx]
+            car_controls.steering += 0.01 * self.track["steering"][idx]
+            car_controls.brake += 0.01 * self.track["brake"][idx]
 
     def opponents_strategy(self, car_controls, data):
         pass
@@ -186,11 +220,25 @@ class Utils:
             idx = 0
         return idx
 
+    def get_current_policy(self, lap_progress, n, m=1):
+        idx = 0
+        actual_lap_progress = lap_progress * 0.01 * m
+        while actual_lap_progress > 1.0:
+            actual_lap_progress -= 1
+
+        idx = int(actual_lap_progress // (1/n))
+        if idx < 0:
+            idx = 0
+        elif idx > n-1:
+            idx = n-1
+
+        return idx
+
 
 class Escape:
     def __init__(self):
         self.valid = True
-        self.MIN_D = 15
+        self.MIN_D = 12
         self.collide_threshold = 20
         self.reverse_threshold = 20
         self.collide_count = 0
@@ -326,6 +374,7 @@ class DrivingClient(DrivingController):
             self.to_goal.set_steering(car_controls, data)
             self.to_goal.set_throttle(car_controls, data)
             self.to_goal.set_brake(car_controls, data)
+            self.to_goal.set_final_control(car_controls, data)
         else:
             self.escape.set_values(data, car_controls)
 
