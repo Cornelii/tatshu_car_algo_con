@@ -1,6 +1,6 @@
 from DrivingInterface.drive_controller import DrivingController
 import numpy as np
-from track_model.maleysia import track_model  # Implant when submitting
+#from track_model.germany import track_model  # Implant when submitting
 
 
 ''' TODO LIST
@@ -9,17 +9,19 @@ Improve set_brake method
 Over-fitting along with lap_progress
 When avoiding front obstacle, No consideration of its own position.
 Improve sort of things in Escape:
+Drtical recovery after bypassing an obstacle.
 '''
 class ToGoal:
     def __init__(self, is_debug=False):
         self.DUMMY = 99
         self.utils = Utils()
         self.is_debug = is_debug
-        self.overfitting = True
-        self.track = track_model
+        self.overfitting = False
+        #self.track = track_model
 
-    def preprocessing(self, sensing_info):
+    def preprocessing(self, sensing_info, half_road_limit):
         data = sensing_info
+
         if self.overfitting:
             idx = self.utils.get_current_policy(data.lap_progress, 200, 1)
             data.to_middle += self.track["to_middle"][idx]
@@ -60,13 +62,15 @@ class ToGoal:
 
     def set_steering(self, car_controls, data):
         car_controls.steering = data.moving_angle*-0.016 / (0.009*data.speed + 1)
-        car_controls.steering += data.to_middle*-0.019 / (0.011*data.speed + 1)
-        car_controls.steering += 0.008 * data.track_forward_angles[self.utils.get_significant_idx_for_steering(data.speed/3.6)]
-        car_controls.steering += 0.002 * data.track_forward_angles[0]
+        car_controls.steering += data.to_middle*-0.021 / (0.011*data.speed + 1)
+        car_controls.steering += 0.006 * data.track_forward_angles[self.utils.get_significant_idx_for_steering(data.speed/3.6)]
+        car_controls.steering += 0.001 * (data.track_forward_angles[0] - data.moving_angle)
         if data.obstacle_flag: # 0.008
             pass
         else:
-            pass
+            if data.speed > 120 and abs(data.track_forward_angles[1]) > 40:
+                car_controls.steering += 0.007 * (data.track_forward_angles[1] - data.moving_angle)
+                car_controls.steering += 0.002 * (data.track_forward_angles[2] - data.moving_angle)
             #car_controls.steering += 130 * data.kappa
 
     def set_throttle(self, car_controls, data):
@@ -85,14 +89,14 @@ class ToGoal:
     def set_brake(self, car_controls, data):
         if abs(data.track_forward_angles[9]) > 80:
             car_controls.brake = self.utils.max(3/250 * (data.speed - 110) + 0.2, 0)
-            if car_controls.brake > 0.8:
-                car_controls.brake = 0.8
-            car_controls.throttle -= 0.07 * car_controls.brake
+            if car_controls.brake > 0.7:
+                car_controls.brake = 0.7
+            car_controls.throttle -= 0.05 * car_controls.brake
         if abs(data.track_forward_angles[5]) > 80:
             car_controls.brake = self.utils.max(3/250 * (data.speed - 130) + 0.3, 0)
-            if car_controls.brake > 0.8:
-                car_controls.brake = 0.8
-            car_controls.throttle -= 0.07 * car_controls.brake
+            if car_controls.brake > 0.7:
+                car_controls.brake = 0.7
+            car_controls.throttle -= 0.05 * car_controls.brake
 
             '''
             if data.speed > 110:
@@ -102,9 +106,9 @@ class ToGoal:
             elif data.speed > 150:
                 car_controls.brake = 0.8
             '''
-        if abs(10 < data.track_forward_angles[2] < 20 and data.speed > 130):
+        if 10 < abs(data.track_forward_angles[2]) < 20 and data.speed > 150:
             car_controls.brake = 0.3
-            car_controls.throttle = 0.5
+            car_controls.throttle = 0.8
 
     def set_final_control(self, car_controls, data):
         if self.overfitting:
@@ -170,6 +174,7 @@ class Utils:
         i = 0
         a, b = 0, 0
         # point = 0
+        pair = []
         while i < n:
             if data.obstacle_map[i] == self.DUMMY:
                 # point = i
@@ -178,15 +183,25 @@ class Utils:
                         if j == n - 1 and j - i > b - a:
                             b = n - 1
                             a = i
+                            pair.append((i, j))
                             i = j
-                        continue
                     else:
                         if (j - i) > b - a:
                             a = i
                             b = j - 1
+                        pair.append((a, b))
                         i = j
                         break
             i += 1
+        min_d = self.DUMMY
+        print(pair)
+        for x, y in pair:
+            if y-x > 4:
+                tmp_target = data.delta * (x + y + 1 - n) / 2
+                if abs(tmp_target - data.to_middle) < min_d:
+                    min_d = abs(tmp_target - data.to_middle)
+                    a, b = x, y
+
         to_middle_target = data.delta * (a + b + 1 - n) / 2
         return to_middle_target, a, b
 
@@ -215,7 +230,7 @@ class Utils:
         return a if a <= b else b
 
     def get_significant_idx_for_steering(self, speed):
-        idx = int(self.min(9, (speed * 1.4)//10-3))
+        idx = int(self.min(9, (speed * 1.6)//10-3))
         if idx < 0:
             idx = 0
         return idx
@@ -238,17 +253,19 @@ class Utils:
 class Escape:
     def __init__(self):
         self.valid = True
-        self.MIN_D = 12
-        self.collide_threshold = 20
-        self.reverse_threshold = 20
+        self.MIN_D = 9
+        self.collide_threshold = 10
+        self.reverse_threshold = 30
         self.collide_count = 0
         self.reverse_count = 0
         self.stop_count = 0
 
-    def is_valid(self, data, half_road_limit=7):
+    def is_valid(self, data, p_throttle, half_road_limit=7):
+        self.check_escaped(data, p_throttle, half_road_limit)
         if self.valid and not self.is_collided(data) and not self.is_reverse(data):
             return True
         else:
+            self.valid = False
             return False
 
     def check_escaped(self, data, p_throttle, half_road_limit=7):
@@ -269,7 +286,7 @@ class Escape:
         if data.collided:
             if self.valid:
                 self.collide_count += 1
-        return self.collide_count > self.collide_threshold
+        return data.collided and self.collide_count > self.collide_threshold
 
     def is_reverse(self, data):
         if not data.moving_forward:
@@ -304,8 +321,8 @@ class Escape:
 
     def set_values(self, data, car_controls):
         car_controls.throttle = -1
-        car_controls.steering = data.moving_angle*0.015
-        car_controls.steering += data.to_middle*0.02
+        car_controls.steering = data.moving_angle*0.012
+        car_controls.steering += data.to_middle*0.015
 
         if data.speed == 0:
             self.stop_count += 1
@@ -360,10 +377,9 @@ class DrivingClient(DrivingController):
 
         ###########################################################################
 
-        data = self.to_goal.preprocessing(sensing_info)
-        self.escape.check_escaped(data, self.p_throttle, self.half_road_limit)
+        data = self.to_goal.preprocessing(sensing_info, self.half_road_limit)
 
-        if self.escape.is_valid(data, self.half_road_limit):
+        if self.escape.is_valid(data, self.p_throttle, self.half_road_limit):
             print(f"1st to_middle: {data.to_middle} mv_angle: {data.moving_angle}")
             data = self.to_goal.modify_input(data, self.half_road_limit)
 
