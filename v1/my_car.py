@@ -47,7 +47,7 @@ class ToGoal:
             data.moving_angle = np.dot(np.array([-0.8, -0.01, 1.0]), np.array([to_middle_target, origin_to_middle,
                                                                              origin_moving_angle]))
 
-        if self.is_debug:
+        if self.is_debug and False:
             print(data.obstacle_map)
             print(f"a: {a}, b: {b}")
             #print(f"to_middle_target: {to_middle_target}")
@@ -61,16 +61,23 @@ class ToGoal:
         return data
 
     def set_steering(self, car_controls, data):
-        car_controls.steering = data.moving_angle*-0.016 / (0.009*data.speed + 1)
+        car_controls.steering = data.moving_angle*-0.017 / (0.009*data.speed + 1)
         car_controls.steering += data.to_middle*-0.021 / (0.011*data.speed + 1)
         car_controls.steering += 0.006 * data.track_forward_angles[self.utils.get_significant_idx_for_steering(data.speed/3.6)]
-        car_controls.steering += 0.001 * (data.track_forward_angles[0] - data.moving_angle)
+        car_controls.steering += 0.0014 * (data.track_forward_angles[0] - data.moving_angle)
+        print(f"obstacle:{data.obstacle_flag}")
         if data.obstacle_flag: # 0.008
             pass
         else:
-            if data.speed > 120 and abs(data.track_forward_angles[1]) > 40:
-                car_controls.steering += 0.007 * (data.track_forward_angles[1] - data.moving_angle)
+            if data.speed > 110 and abs(data.track_forward_angles[1]) > 40:
+                car_controls.steering += 0.0073 * (data.track_forward_angles[1] - data.moving_angle)
+                car_controls.steering += 0.0023 * (data.track_forward_angles[2] - data.moving_angle)
+            elif 90 < data.speed < 95:
+                car_controls.steering += 0.004 * (data.track_forward_angles[1] - data.moving_angle)
                 car_controls.steering += 0.002 * (data.track_forward_angles[2] - data.moving_angle)
+            elif data.speed < 69:
+                car_controls.steering += 0.004 * (data.track_forward_angles[0] - data.moving_angle)
+
             #car_controls.steering += 130 * data.kappa
 
     def set_throttle(self, car_controls, data):
@@ -194,9 +201,13 @@ class Utils:
                         break
             i += 1
         min_d = self.DUMMY
-        print(pair)
+        w = 4
+        if data.speed < 50:
+            w += 1
+        elif data.speed < 30:
+            w += 1
         for x, y in pair:
-            if y-x > 4:
+            if y-x > w:
                 tmp_target = data.delta * (x + y + 1 - n) / 2
                 if abs(tmp_target - data.to_middle) < min_d:
                     min_d = abs(tmp_target - data.to_middle)
@@ -296,25 +307,21 @@ class Escape:
     def is_escaped(self, data, p_throttle):
         if p_throttle > 0: # car_forward
             if data.moving_forward: # real_car_forward
-                print("real_car_forward")
-                if abs(data.moving_angle) < 70:
+                if abs(data.moving_angle) < 40:
                     return True
             else:# real_car_backward
-                print("real_car_backward")
                 if data.moving_angle > 0:
                     data.moving_angle -= 170
                 else:
                     data.moving_angle += 170
         else:
             if data.moving_forward: # real_car_backward
-                print("real_car_backward")
                 if data.moving_angle > 0:
                     data.moving_angle -= 170
                 else:
                     data.moving_angle += 170
             else: # real_car_forward
-                print("real_car_forward")
-                if abs(data.moving_angle) < 70:
+                if abs(data.moving_angle) < 40:
                     return True
 
         return False
@@ -361,18 +368,11 @@ class DrivingClient(DrivingController):
         if self.is_debug:
             print("=========================================================")
             print("[MyCar] to middle: {}".format(sensing_info.to_middle))
-
-            print("[MyCar] collided: {}".format(sensing_info.collided))
-            #print("[MyCar] car speed: {} km/h".format(sensing_info.speed))
-
-            print("[MyCar] is moving forward: {}".format(sensing_info.moving_forward))
             print("[MyCar] moving angle: {}".format(sensing_info.moving_angle))
-            print("[MyCar] lap_progress: {}".format(sensing_info.lap_progress))
-
             print("[MyCar] track_forward_angles: {}".format(sensing_info.track_forward_angles))
             print("[MyCar] track_forward_obstacles: {}".format(sensing_info.track_forward_obstacles))
             #print("[MyCar] opponent_cars_info: {}".format(sensing_info.opponent_cars_info))
-            #print("[MyCar] distance_to_way_points: {}".format(sensing_info.distance_to_way_points))
+            print("[MyCar] distance_to_way_points: {}".format(sensing_info.distance_to_way_points))
             print("=========================================================")
 
         ###########################################################################
@@ -380,10 +380,7 @@ class DrivingClient(DrivingController):
         data = self.to_goal.preprocessing(sensing_info, self.half_road_limit)
 
         if self.escape.is_valid(data, self.p_throttle, self.half_road_limit):
-            print(f"1st to_middle: {data.to_middle} mv_angle: {data.moving_angle}")
             data = self.to_goal.modify_input(data, self.half_road_limit)
-
-            print(f"2nd to_middle: {data.to_middle} mv_angle: {data.moving_angle}")
 
             data = self.to_goal.get_final_input(data)
 
